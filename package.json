@@ -1,0 +1,37 @@
+{
+  "name": "please-take-me-home-bot",
+  "version": "1.0.0",
+  "description": "This is a Telegram bot. If you send him your location it will show you the buses time nearby. ",
+  "main": "app.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "tsc": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marcocelani/PleaseTakeMeHomeBot.git"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "transport"
+  ],
+  "author": "Marco Celani",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/marcocelani/PleaseTakeMeHomeBot/issues"
+  },
+  "homepage": "https://github.com/marcocelani/PleaseTakeMeHomeBot#readme",
+  "dependencies": {
+    "@types/telebot": "^1.2.1",
+    "moment": "^2.19.3",
+    "telebot": "^1.2.3"
+  },
+  "devDependencies": {
+    "typescript": "^2.6.2",
+    "typescript-eslint-parser": "^9.0.1"
+  }
+}
