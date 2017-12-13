@@ -2,20 +2,13 @@
  * This is an example. Rename it as Config.ts 
  *
 */
-import { ITelebotOptions } from './ITeleBotOptions'
+import * as TeleBot from 'telebot';
 export class Config {
     public static readonly BOT_NAME : string = 'PleaseTakeMeHomeBot';
     public static readonly USE_WEBHOOK : boolean = false;
-    public static readonly TELEBOT_OPTS : ITelebotOptions = {
+    public static readonly TELEBOT_OPTS : TeleBot.config = {
         token: 'YOUR_TOKEN',
-        webhookOpt: {
-            url: '',
-            key: '',
-            cert:'',
-            port: 0,
-            host: ''
-        },
-        pollingOpt: {
+        polling: {
             interval: 1000 * 3
         }
     };
