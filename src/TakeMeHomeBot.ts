@@ -1,7 +1,16 @@
 import * as TeleBot from 'telebot';
 import * as moment from 'moment';
+import * as async from 'async';
+import * as Axios from 'axios';
 import { Config } from './Config';
 import { MongoClient, Db, MongoError, Collection, Cursor, MongoCallback } from 'mongodb';
+import { GTFSRepository } from './GTFSRepository';
+import { request } from 'https';
+import * as path from 'path';
+import { ParsedPath } from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as hash_file from 'hash-file';
 
 export class TakeMeHomeBot {
     private telebot: TeleBot;
@@ -134,6 +143,129 @@ export class TakeMeHomeBot {
         this.telebot.on('/start', (msg) => this.CmdStart(msg));
     }
 
+    private createPathIfNotExist(fileName: string): Promise<void> {
+        return new Promise<void>(
+            (global_resolver, global_rejected) => {
+                Promise.all<void>([
+                    /* first create the TMP dir. */
+                    new Promise<void>((resolve, reject) => {
+                        fs.mkdir(os.tmpdir + path.sep + Config.TMP_DIR_NAME, (err: NodeJS.ErrnoException) => {
+                            if (err) {
+                                if (err.code === 'EEXIST') {
+                                    resolve();
+                                    return;
+                                }
+                                this.logErr(err);
+                                reject();
+                                return;
+                            }
+                            resolve();
+                        });
+                    }),
+                    /* second create the container dir. */
+                    new Promise<void>((resolve, reject) => {
+                        fs.mkdir(os.tmpdir + path.sep + Config.TMP_DIR_NAME + path.sep + fileName, 
+                            (err : NodeJS.ErrnoException) => {
+                            if(err){
+                                if(err.code === 'EEXIST'){
+                                    resolve();
+                                    return;
+                                }
+                                this.logErr(err);
+                                reject();
+                                return;
+                            }
+                            resolve();
+                        });
+                    })
+                ])
+                .then(
+                    all => global_resolver()
+                )
+                .catch(
+                    err => global_rejected()
+                );
+            }
+        );
+    }
+
+    private saveGtfsFileZip(fileName: string, data: any): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            if (!fileName) {
+                reject();
+                return;
+            }
+            fs.writeFile(os.tmpdir + '\\' + Config.TMP_DIR_NAME + '\\' + fileName + '\\' + fileName, data, 
+                (err: NodeJS.ErrnoException) => {
+                if (err) {
+                    this.logErr(err);
+                    reject();
+                    return;
+                }
+                resolve();
+            });
+        });
+    }
+
+    private updateGTFSData(gtfsDoc: GTFSRepository): void {
+        if (!gtfsDoc.repositoryUrl)
+            return;
+        Axios.default.get(gtfsDoc.repositoryUrl)
+            .then(async response => {
+                if (response.status === 200
+                    && response.headers['content-type'] === 'application/zip'
+                ) {
+                    let parsedPath: ParsedPath = path.parse(response.request.path);
+                    if (!parsedPath.base)
+                        return;
+                    try {
+                        await this.createPathIfNotExist(parsedPath.base);
+                        await this.saveGtfsFileZip(parsedPath.base, response.data);
+                        let fileHash = await hash_file(os.tmpdir + '\\' + Config.TMP_DIR_NAME + '\\' + parsedPath.base + '\\' + parsedPath.base);
+                        if (fileHash === gtfsDoc.dataHash) {
+                            this.logInfo(`No update needed for ${gtfsDoc.city}`);
+                            return;
+                        }
+                        this.logInfo(`Update needed for ${gtfsDoc.city}`);
+                        /* TODO */
+                    }
+                    catch (err) {
+                        this.logErr(err);
+                    }
+                } else {
+                    this.logErr(response.statusText);
+                }
+            })
+    }
+
+    private loadGTFSDatasets(): void {
+        let gtfsDataArr: Array<GTFSRepository>;
+        new Promise<Array<GTFSRepository>>((resolve, reject) => {
+            this.db.collection<GTFSRepository>(Config.MONGODB_GTFS_COLL,
+                (err: MongoError, coll: Collection<GTFSRepository>) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(coll.find<GTFSRepository>({ isActive: true }).toArray());
+                });
+        })
+            .then(gtfsDocs => {
+                async.forEach<GTFSRepository, Error>(gtfsDocs, gtfsItem => {
+                    if (!moment.isMoment(gtfsItem.lastUpdate)
+                        || moment(gtfsItem.lastUpdate).isAfter(moment().days(Config.UPDATE_DAY_AFTER))) {
+                        this.updateGTFSData(gtfsItem);
+                    }
+                }, (err) => {
+                    if (err) {
+                        throw new Error('Something went wrong.');
+                    }
+                    this.logInfo('TEST.');
+                });
+            })
+            .catch(err => this.logErr(err));
+    }
+
     async init() {
         this.logInfo(`Starting ${Config.BOT_NAME}...`);
         this.db = await this.initMongoInstance()
@@ -144,9 +276,12 @@ export class TakeMeHomeBot {
         let config: TeleBot.config = await this.getConfiguration()
             .catch((reason) => { console.log(reason); return null; });
         try {
+            this.logInfo(``);
             this.telebot = new TeleBot(config);
             this.initBotCommand();
-            this.telebot.start();
+            this.logInfo(`loading/updating GTFS Datasets.`);
+            this.loadGTFSDatasets();
+            //this.telebot.start();
         }
         catch (err) {
             this.logErr(err.message);
