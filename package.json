@@ -32,6 +32,7 @@
     "hash-file": "^3.0.0",
     "moment": "^2.19.3",
     "mongodb": "^2.2.33",
+    "mongoose": "^4.13.7",
     "telebot": "^1.2.3",
     "unzip": "^0.1.11"
   },
@@ -39,6 +40,7 @@
     "@types/async": "^2.0.45",
     "@types/hash-file": "^3.0.0",
     "@types/mongodb": "^2.2.17",
+    "@types/mongoose": "^4.7.29",
     "@types/telebot": "^1.2.1",
     "@types/unzip": "^0.1.0",
     "eslint": "^4.13.1",
