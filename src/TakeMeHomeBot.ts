@@ -2,17 +2,19 @@ import * as TeleBot from 'telebot';
 import * as moment from 'moment';
 import * as async from 'async';
 import * as Axios from 'axios';
-import { Config } from './Config';
-import { request } from 'https';
-import * as path from 'path';
-import { ParsedPath, resolve } from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as hash_file from 'hash-file';
 import * as mongoose from 'mongoose';
-import { Connection, Document, Schema, Model, model, mongo } from "mongoose";
+import * as path from 'path';
+import * as unzip from 'unzip';
+import * as csvParser from 'csv-parse';
+import { Config } from './Config';
+import { ParsedPath, resolve, parse } from 'path';
 import { ConfigModel, IConfigModel } from './models/ConfigModel';
 import { GTFSRepositoryModel, IGTFSRepositoryModel } from './models/GTFSRepositoryModel';
+import { Model } from 'mongoose';
+import { reject } from 'async';
 
 export class TakeMeHomeBot {
     private telebot: TeleBot;
@@ -177,16 +179,13 @@ export class TakeMeHomeBot {
         );
     }
 
-    private saveGtfsFileZip(fileName: string, data: any): Promise<void> {
+    private saveGtfsFileZip(fullPath: string, data: any): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            if (!fileName) {
+            if (!fullPath) {
                 reject();
                 return;
             }
-            fs.writeFile(os.tmpdir + path.sep
-                + Config.TMP_DIR_NAME + path.sep
-                + fileName + path.sep
-                + fileName, data,
+            fs.writeFile(fullPath, data,
                 (err: NodeJS.ErrnoException) => {
                     if (err) {
                         this.logErr(err);
@@ -198,6 +197,72 @@ export class TakeMeHomeBot {
         });
     }
 
+    private extractSTOPSCsv(zipFilePath: string): Promise<boolean> {
+        return new Promise<boolean>(
+            (resolve) => {
+                if (!zipFilePath) {
+                    this.logErr(`No zip file specified.`);
+                    resolve(false);
+                    return;
+                }
+                const outputPath = path.parse(zipFilePath).dir + path.sep + 'stops.txt';
+                this.logInfo(`Extracting STOPS information[${zipFilePath}].`);
+                try {
+                    fs.createReadStream(zipFilePath)
+                        .pipe(unzip.Parse())
+                        .on('entry', (entry) => {
+                            var fileName = entry.path;
+                            var type = entry.type;
+                            if (entry.type === 'File'
+                                && fileName === 'stops.txt') {
+                                entry.pipe(fs.createWriteStream(outputPath, { autoClose: true}));
+                                entry.autodrain();
+                                this.logInfo(`stops.txt extracted[${zipFilePath}].`);
+                            } else {
+                                entry.autodrain();
+                            }
+                        })
+                        .on('error', (err) => {
+                            this.logErr(err);
+                            resolve(false);
+                        }).on('close', () => {
+                            resolve(true);
+                        });
+                }
+                catch (err) {
+                    this.logErr(err);
+                    resolve(false);
+                }
+            }
+        );
+    }
+
+    private parseCSVData(stopsFile : string) : Promise<Array<any>> {
+        return new Promise<Array<any>>(
+            (resolve, reject) => {
+                this.logInfo(`Parsing csv file[${stopsFile}].`);
+                const parser = csvParser(
+                    {
+                        delimiter: ',',
+                        columns: true,
+                        trim: true,
+                        skip_empty_lines: true,
+                        relax_column_count: true
+                    },
+                    (err, data) => {
+                        if (err) {
+                            this.logErr(err);
+                            reject(err);
+                            return;
+                        }
+                        this.logInfo(`Csv file[${stopsFile}] parsed.`);                        
+                        resolve(data);
+                    });
+                fs.createReadStream(stopsFile, { autoClose: true}).pipe(parser);
+            }
+        );
+    }
+
     private updateGTFSData(gtfsDoc: IGTFSRepositoryModel): Promise<void> {
         return new Promise<void>((resolve) => {
             if (!gtfsDoc.repositoryUrl) {
@@ -205,32 +270,46 @@ export class TakeMeHomeBot {
                 return;
             }
             this.logInfo(`Getting ${gtfsDoc.name} from ${gtfsDoc.repositoryUrl}.`);
-            Axios.default.get(gtfsDoc.repositoryUrl)
+            Axios.default.get(gtfsDoc.repositoryUrl, { responseType: 'arraybuffer' })
                 .then(async response => {
                     if (response.status === 200
                         && response.headers['content-type'] === 'application/zip'
                     ) {
                         this.logInfo(`${gtfsDoc.name} downloaded.`);
-                        let parsedPath: ParsedPath = path.parse(response.request.path);
+                        const parsedPath: ParsedPath = path.parse(response.request.path);
                         if (!parsedPath.base) {
                             resolve();
                             return;
                         }
+                        const fullPath: string = os.tmpdir + path.sep
+                            + Config.TMP_DIR_NAME + path.sep
+                            + parsedPath.base + path.sep
+                            + parsedPath.base;
+                        const stopsFile: string = os.tmpdir + path.sep
+                            + Config.TMP_DIR_NAME + path.sep
+                            + parsedPath.base + path.sep
+                            + 'stops.txt';
                         try {
-                            await this.createPathIfNotExist(parsedPath.base);
-                            await this.saveGtfsFileZip(parsedPath.base, response.data);
-                            let fileHash = await hash_file(os.tmpdir + path.sep
-                                + Config.TMP_DIR_NAME + path.sep
-                                + parsedPath.base + path.sep
-                                + parsedPath.base);
+                            await this.createPathIfNotExist(parsedPath.base).catch( (err) => { throw err; });
+                            await this.saveGtfsFileZip(fullPath, response.data).catch( (err) => { throw err; });
+                            this.logInfo(`getting hash for ${parsedPath.base} file.`);
+                            let fileHash = await hash_file(fullPath).catch( (err) => { throw err; });
                             if (fileHash === gtfsDoc.hash) {
                                 this.logInfo(`No update needed for ${gtfsDoc.name}`);
                                 resolve();
                                 return;
                             }
-                            this.logInfo(`Update needed for ${gtfsDoc.name}`);
-                            /* TODO */
-                            resolve();
+                            this.logInfo(`Hashes differ, update needed for ${gtfsDoc.name}`);
+                            const result = await this.extractSTOPSCsv(fullPath).catch( (err) => { throw err; });
+                            if (!result) {
+                                this.logInfo(`No stops.txt file found.`);
+                                resolve();
+                                return;
+                            }
+                            else {
+                                const gtfsDataArr = await this.parseCSVData(stopsFile).catch( (err) => { throw err; });
+                                /* TODO */
+                            }
                         }
                         catch (err) {
                             this.logErr(err);
@@ -249,7 +328,7 @@ export class TakeMeHomeBot {
         let GTFSRepository = new GTFSRepositoryModel().model();
         GTFSRepository.find({ isActive: true })
             .then((repoItems: IGTFSRepositoryModel[]) => {
-                this.logInfo(`${repoItems.length} repositor[ y | ies] found.`);
+                this.logInfo(`${repoItems.length} repositor[ y | ies ] found.`);
                 async.forEach<IGTFSRepositoryModel, Error>(repoItems, (gtfsItem, next) => {
                     if (!moment(gtfsItem.lastUpdate).isValid()
                         || moment(gtfsItem.lastUpdate)
@@ -274,13 +353,11 @@ export class TakeMeHomeBot {
 
     async init() {
         this.logInfo(`Starting ${Config.BOT_NAME}[PID:${process.pid}]...`);
-
         let config: TeleBot.config = await this.getConfiguration()
             .catch((reason) => { console.log(reason); return null; });
         if (!config)
             throw new Error('No configuration found.');
         try {
-            this.logInfo(`Starting ${Config.BOT_NAME}...`);
             this.telebot = new TeleBot(config);
             this.initBotCommand();
             this.logInfo(`loading/updating GTFS Datasets.`);
