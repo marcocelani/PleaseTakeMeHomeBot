@@ -15,11 +15,13 @@ import { ConfigModel, IConfigModel } from './models/ConfigModel';
 import { GTFSRepositoryModel, IGTFSRepositoryModel } from './models/GTFSRepositoryModel';
 import { Model } from 'mongoose';
 import { reject } from 'async';
+import { IGTFSDataModel, GTFSDataModel } from './models/GTFSDataModel';
 
 export class TakeMeHomeBot {
     private telebot: TeleBot;
     private db: mongoose.Connection;
     private config: Model<IConfigModel>;
+    private gtfsDataModel: Model<IGTFSDataModel>;
 
     constructor() {
         process.on('SIGINT', () => {
@@ -40,6 +42,7 @@ export class TakeMeHomeBot {
             this.logInfo('Mongoose disconnected.');
         });
         this.config = new ConfigModel().model();
+        this.gtfsDataModel = new GTFSDataModel().model();
     }
 
     private getConfiguration(): Promise<TeleBot.config> {
@@ -215,7 +218,7 @@ export class TakeMeHomeBot {
                             var type = entry.type;
                             if (entry.type === 'File'
                                 && fileName === 'stops.txt') {
-                                entry.pipe(fs.createWriteStream(outputPath, { autoClose: true}));
+                                entry.pipe(fs.createWriteStream(outputPath, { autoClose: true }));
                                 entry.autodrain();
                                 this.logInfo(`stops.txt extracted[${zipFilePath}].`);
                             } else {
@@ -237,7 +240,7 @@ export class TakeMeHomeBot {
         );
     }
 
-    private parseCSVData(stopsFile : string) : Promise<Array<any>> {
+    private parseCSVData(stopsFile: string): Promise<Array<any>> {
         return new Promise<Array<any>>(
             (resolve, reject) => {
                 this.logInfo(`Parsing csv file[${stopsFile}].`);
@@ -255,12 +258,22 @@ export class TakeMeHomeBot {
                             reject(err);
                             return;
                         }
-                        this.logInfo(`Csv file[${stopsFile}] parsed.`);                        
+                        this.logInfo(`Csv file[${stopsFile}] parsed.`);
                         resolve(data);
                     });
-                fs.createReadStream(stopsFile, { autoClose: true}).pipe(parser);
+                fs.createReadStream(stopsFile, { autoClose: true }).pipe(parser);
             }
         );
+    }
+
+    private checkGTFSItem(gtfsItem: any): boolean {
+        if (!gtfsItem
+            || !gtfsItem['stop_id']
+            || !gtfsItem['stop_name']
+            || !gtfsItem['stop_lat']
+            || !gtfsItem['stop_lon'])
+            return false;
+        return true;
     }
 
     private updateGTFSData(gtfsDoc: IGTFSRepositoryModel): Promise<void> {
@@ -290,25 +303,58 @@ export class TakeMeHomeBot {
                             + parsedPath.base + path.sep
                             + 'stops.txt';
                         try {
-                            await this.createPathIfNotExist(parsedPath.base).catch( (err) => { throw err; });
-                            await this.saveGtfsFileZip(fullPath, response.data).catch( (err) => { throw err; });
+                            await this.createPathIfNotExist(parsedPath.base).catch((err) => { throw err; });
+                            await this.saveGtfsFileZip(fullPath, response.data).catch((err) => { throw err; });
                             this.logInfo(`getting hash for ${parsedPath.base} file.`);
-                            let fileHash = await hash_file(fullPath).catch( (err) => { throw err; });
+                            let fileHash = await hash_file(fullPath).catch((err) => { throw err; });
                             if (fileHash === gtfsDoc.hash) {
                                 this.logInfo(`No update needed for ${gtfsDoc.name}`);
                                 resolve();
                                 return;
                             }
                             this.logInfo(`Hashes differ, update needed for ${gtfsDoc.name}`);
-                            const result = await this.extractSTOPSCsv(fullPath).catch( (err) => { throw err; });
+                            const result = await this.extractSTOPSCsv(fullPath).catch((err) => { throw err; });
                             if (!result) {
                                 this.logInfo(`No stops.txt file found.`);
                                 resolve();
                                 return;
                             }
                             else {
-                                const gtfsDataArr = await this.parseCSVData(stopsFile).catch( (err) => { throw err; });
-                                /* TODO */
+                                const gtfsDataArr = await this.parseCSVData(stopsFile).catch((err) => { throw err; });
+                                this.logInfo(`Importing data for ${gtfsDoc.name}`);
+                                let imported_count : number = 0;
+                                async.forEach<any, Error>(gtfsDataArr,
+                                    (gtfsItem, next) => {
+                                        if (this.checkGTFSItem(gtfsItem)) {
+                                            try {
+                                                const gtfsDataMdl: any = {
+                                                    stop_id: gtfsItem.stop_id,
+                                                    stop_name: gtfsItem.stop_name,
+                                                    location: {
+                                                        type: 'Point',
+                                                        coordinates: [gtfsItem.stop_lat, gtfsItem.stop_lon]
+                                                    },
+                                                    referenceId: gtfsDoc._id
+                                                }
+                                                const gtfsDataDoc = new this.gtfsDataModel(gtfsDataMdl);
+                                                gtfsDataDoc.save();
+                                                imported_count++;
+                                            } catch (err) {
+                                                this.logErr(err);
+                                            }
+                                        } else {
+                                            this.logInfo(`Invalid gtfs item found. Skip.`);
+                                        }
+                                        next();
+                                    },
+                                    (err) => {
+                                        if (err) {
+                                            this.logErr(err);
+                                            return;
+                                        }
+                                        this.logInfo(`Imported ${imported_count} doc[ s ].`);
+                                        resolve();
+                                    });
                             }
                         }
                         catch (err) {
