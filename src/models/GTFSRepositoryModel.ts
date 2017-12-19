@@ -9,6 +9,7 @@ export interface IGTFSRepositoryModel extends Document {
     lastUpdate: Date;
     repositoryUrl: string;
     hash: string;
+    dev_key?: string;
 }
 export class GTFSRepositoryModel implements IPTMHMModel {
     private gtfsRepositorySchema: Schema;
@@ -35,7 +36,8 @@ export class GTFSRepositoryModel implements IPTMHMModel {
             hash: {
                 type: String,
                 required: true
-            }
+            },
+            dev_key: String
         }, { collection: Config.MONGODB_GTFS_COLL});
         /* model */
         this.gtfsRepositoryModel = mongoose.model<IGTFSRepositoryModel>('GTFSRepository', this.gtfsRepositorySchema);

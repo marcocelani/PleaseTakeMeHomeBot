@@ -20,8 +20,9 @@ import { IGTFSDataModel, GTFSDataModel } from './models/GTFSDataModel';
 export class TakeMeHomeBot {
     private telebot: TeleBot;
     private db: mongoose.Connection;
-    private config: Model<IConfigModel>;
+    private configModel: Model<IConfigModel>;
     private gtfsDataModel: Model<IGTFSDataModel>;
+    private gtfsRepositoryModel : Model<IGTFSRepositoryModel>;
 
     constructor() {
         process.on('SIGINT', () => {
@@ -41,18 +42,19 @@ export class TakeMeHomeBot {
         mongoose.connection.on('disconnected', () => {
             this.logInfo('Mongoose disconnected.');
         });
-        this.config = new ConfigModel().model();
+        this.configModel = new ConfigModel().model();
         this.gtfsDataModel = new GTFSDataModel().model();
+        this.gtfsRepositoryModel = new GTFSRepositoryModel().model();
     }
 
     private getConfiguration(): Promise<TeleBot.config> {
         return new Promise<TeleBot.config>(
             (p_resolve, p_reject) => {
-                this.config.findOne({})
+                this.configModel.findOne({})
                     .then(res => {
                         if (!res) {
                             this.logInfo(`No config found. let's create new default one.`);
-                            let new_config = new this.config({ token: Config.DefaultConfig.token })
+                            let new_config = new this.configModel({ token: Config.DefaultConfig.token })
                             new_config.save();
                             p_resolve(new_config);
                             return;
@@ -92,14 +94,89 @@ export class TakeMeHomeBot {
             return msg.from.id;
     }
 
-    private CmdStart(msg: any): void {
+    private async CmdStart(msg: any): Promise<void> {
         if (!msg) {
             this.logInfo(`msg is invalid.`);
             return;
         }
         let id = this.getMsgId(msg);
-        this.telebot.sendMessage(id, 'TEST');
+        this.telebot.sendMessage(id, `
+            Hello ${this.getUserName(msg)}.
+If you send me your location I show you the buses arrivals and times stops nearby you.
+This is a list of active repositories:
+${await this.getRepositoriesActiveList().catch()}
+`);
     }
+
+    private isValidMsgLocationEvent(msg) : boolean {
+        if(!msg
+            || !msg.location
+            || !msg.location.latitude
+            || !msg.location.longitude)
+            return false;
+        return true;
+    }
+
+    private ManageLocationEvent(msg) : void{
+        if(this.isValidMsgLocationEvent(msg)){
+            const geoJSON = {
+                type: 'Point',
+                coordinates: [msg.location.latitude, msg.location.longitude]
+            }
+            this.gtfsDataModel.geoNear(geoJSON, { maxDistance: 500, spherical: true, lean: true },
+                (err, results, stats) => {
+                    if(err){
+                        this.logErr(err);
+                        return;
+                    }
+                   async.forEach<any, Error>(results, 
+                    (stopItem, next) => {
+                        this.telebot.sendMessage(this.getMsgId(msg), `#️⃣ ${stopItem.obj.stop_id}\n🚏 ${stopItem.obj.stop_name}\n🔍 ${stopItem.obj.stop_desc ? stopItem.obj.stop_desc : ''}`)
+                        .then( () => { next(); }).catch( err => { this.logErr(err); next(); } );
+                    },
+                    err => {
+                        this.logInfo(`query complete for ${this.getUserName(msg)}.`);
+                    });
+                }
+            );
+        } else {
+            this.logErr(`Invalid location message event.`);
+        }
+    }
+
+    private getRepositoriesActiveList() : Promise<string> {
+        return new Promise<string>( (resolve, reject) => {
+            this.gtfsRepositoryModel.find({ isActive : true }, 'name')
+            .then((repoItems: IGTFSRepositoryModel[]) => {
+                const repoNameArr : Array<string> = [];
+                async.forEach(
+                    repoItems,
+                    (item, next) => {
+                        repoNameArr.push(item.name);
+                        next();
+                    },
+                    err => {
+                        if(err){
+                            reject(err);
+                            return;
+                        }
+                        resolve(repoNameArr.join(', '));
+                    }
+                );
+                const nameArr : Array<string> = [];
+
+            }).catch( err => {
+                this.logErr(err);
+                reject(err);
+            });
+        });
+    }
+
+    private getUserName(msg : any) : string {
+        if(!msg && !msg.from)
+            return '(not found)';
+        return (msg.from.username) ? `@${msg.from.username}` : `@id:${msg.from.id}`; 
+    };
 
     private isFromGroup(msg: any): boolean {
         if (msg
@@ -134,6 +211,7 @@ export class TakeMeHomeBot {
         if (!this.telebot)
             throw new Error('No Telebot instance.');
         this.telebot.on('/start', (msg) => this.CmdStart(msg));
+        this.telebot.on('location', (msg) => this.ManageLocationEvent(msg));
     }
 
     private createPathIfNotExist(fileName: string): Promise<void> {
@@ -291,7 +369,8 @@ export class TakeMeHomeBot {
                                     type: 'Point',
                                     coordinates: [gtfsItem.stop_lat, gtfsItem.stop_lon]
                                 },
-                                referenceId: gtfsDoc._id
+                                referenceId: gtfsDoc._id,
+                                stop_desc: gtfsItem.stop_desc ? gtfsItem.stop_desc : ''
                             });
                             gtfsDataDoc.save();
                             imported_count++;
@@ -314,7 +393,7 @@ export class TakeMeHomeBot {
         });
     }
 
-    updateHash(gtfsDoc: IGTFSRepositoryModel, fileHash: string): Promise<void> {
+    private updateHash(gtfsDoc: IGTFSRepositoryModel, fileHash: string): Promise<void> {
         return new Promise<void>(
             (resolve, reject) => {
                 gtfsDoc.model('GTFSRepository').findOneAndUpdate(
@@ -396,8 +475,7 @@ export class TakeMeHomeBot {
     }
 
     private loadGTFSDatasets(): void {
-        const GTFSRepository = new GTFSRepositoryModel().model();
-        GTFSRepository.find({ isActive: true })
+        this.gtfsRepositoryModel.find({ isActive: true })
             .then((repoItems: IGTFSRepositoryModel[]) => {
                 this.logInfo(`${repoItems.length} repositor[ y | ies ] found.`);
                 async.forEach<IGTFSRepositoryModel, Error>(repoItems, (gtfsItem, next) => {
@@ -432,11 +510,11 @@ export class TakeMeHomeBot {
         if (!config)
             throw new Error('No configuration found.');
         try {
-            this.telebot = new TeleBot(config);
-            this.initBotCommand();
             this.logInfo(`loading/updating GTFS Datasets.`);
             this.loadGTFSDatasets();
-            //this.telebot.start();
+            this.telebot = new TeleBot(config);
+            this.initBotCommand();
+            this.telebot.start();
         }
         catch (err) {
             this.logErr(err.message);
