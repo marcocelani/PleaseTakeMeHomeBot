@@ -342,7 +342,7 @@ export class TakeMeHomeBot {
             Axios.default.get(gtfsDoc.repositoryUrl, { responseType: 'arraybuffer' })
                 .then(async response => {
                     if (response.status === 200
-                        && response.headers['content-type'] === 'application/zip'
+                        && response.headers['content-type'].includes('application/zip')
                     ) {
                         this.logInfo(`${gtfsDoc.name} downloaded.`);
                         const parsedPath: ParsedPath = path.parse(response.request.path);
@@ -379,6 +379,7 @@ export class TakeMeHomeBot {
                                 const gtfsDataArr = await this.parseCSVData(stopsFile).catch((err) => { throw err; });
                                 await this.importData(gtfsDataArr, gtfsDoc).catch((err) => { throw err; });
                                 await this.updateHash(gtfsDoc, fileHash).catch((err) => { throw err; });
+                                resolve();
                             }
                         }
                         catch (err) {
@@ -404,11 +405,12 @@ export class TakeMeHomeBot {
                         || moment(gtfsItem.lastUpdate)
                             .isAfter(moment().days(Config.UPDATE_DAY_AFTER))) {
                         this.updateGTFSData(gtfsItem).then(() => {
+                            next();
                         });
                     } else {
                         this.logInfo(`No update needed for ${gtfsItem.name}.`);
+                        next();
                     }
-                    next();
                 }, err => {
                     if (err) {
                         this.logErr(err);
