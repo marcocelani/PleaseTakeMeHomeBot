@@ -276,6 +276,62 @@ export class TakeMeHomeBot {
         return true;
     }
 
+    private importData(dataArr: Array<any>, gtfsDoc: IGTFSRepositoryModel): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.logInfo(`Importing data for ${gtfsDoc.name}`);
+            let imported_count: number = 0;
+            async.forEach<any, Error>(dataArr,
+                (gtfsItem, next) => {
+                    if (this.checkGTFSItem(gtfsItem)) {
+                        try {
+                            const gtfsDataDoc = new this.gtfsDataModel({
+                                stop_id: gtfsItem.stop_id,
+                                stop_name: gtfsItem.stop_name,
+                                location: {
+                                    type: 'Point',
+                                    coordinates: [gtfsItem.stop_lat, gtfsItem.stop_lon]
+                                },
+                                referenceId: gtfsDoc._id
+                            });
+                            gtfsDataDoc.save();
+                            imported_count++;
+                        } catch (err) {
+                            this.logErr(err);
+                        }
+                    } else {
+                        this.logInfo(`Invalid gtfs item found. Skip.`);
+                    }
+                    next();
+                },
+                (err) => {
+                    if (err) {
+                        this.logErr(err);
+                        return;
+                    }
+                    this.logInfo(`Imported ${imported_count} doc[ s ].`);
+                    resolve();
+                });
+        });
+    }
+
+    updateHash(gtfsDoc: IGTFSRepositoryModel, fileHash: string): Promise<void> {
+        return new Promise<void>(
+            (resolve, reject) => {
+                gtfsDoc.model('GTFSRepository').findOneAndUpdate(
+                    { _id: gtfsDoc._id },
+                    { hash: fileHash, lastUpdate: new Date() },
+                    (err, doc) => {
+                        if(err){
+                            this.logErr(err);
+                            reject();
+                        }
+                        this.logInfo(`${gtfsDoc.name} repository hash updated.`);
+                        resolve();
+                    }
+                );
+            });
+    }
+
     private updateGTFSData(gtfsDoc: IGTFSRepositoryModel): Promise<void> {
         return new Promise<void>((resolve) => {
             if (!gtfsDoc.repositoryUrl) {
@@ -321,40 +377,8 @@ export class TakeMeHomeBot {
                             }
                             else {
                                 const gtfsDataArr = await this.parseCSVData(stopsFile).catch((err) => { throw err; });
-                                this.logInfo(`Importing data for ${gtfsDoc.name}`);
-                                let imported_count : number = 0;
-                                async.forEach<any, Error>(gtfsDataArr,
-                                    (gtfsItem, next) => {
-                                        if (this.checkGTFSItem(gtfsItem)) {
-                                            try {
-                                                const gtfsDataMdl: any = {
-                                                    stop_id: gtfsItem.stop_id,
-                                                    stop_name: gtfsItem.stop_name,
-                                                    location: {
-                                                        type: 'Point',
-                                                        coordinates: [gtfsItem.stop_lat, gtfsItem.stop_lon]
-                                                    },
-                                                    referenceId: gtfsDoc._id
-                                                }
-                                                const gtfsDataDoc = new this.gtfsDataModel(gtfsDataMdl);
-                                                gtfsDataDoc.save();
-                                                imported_count++;
-                                            } catch (err) {
-                                                this.logErr(err);
-                                            }
-                                        } else {
-                                            this.logInfo(`Invalid gtfs item found. Skip.`);
-                                        }
-                                        next();
-                                    },
-                                    (err) => {
-                                        if (err) {
-                                            this.logErr(err);
-                                            return;
-                                        }
-                                        this.logInfo(`Imported ${imported_count} doc[ s ].`);
-                                        resolve();
-                                    });
+                                await this.importData(gtfsDataArr, gtfsDoc).catch((err) => { throw err; });
+                                await this.updateHash(gtfsDoc, fileHash).catch((err) => { throw err; });
                             }
                         }
                         catch (err) {
@@ -371,7 +395,7 @@ export class TakeMeHomeBot {
     }
 
     private loadGTFSDatasets(): void {
-        let GTFSRepository = new GTFSRepositoryModel().model();
+        const GTFSRepository = new GTFSRepositoryModel().model();
         GTFSRepository.find({ isActive: true })
             .then((repoItems: IGTFSRepositoryModel[]) => {
                 this.logInfo(`${repoItems.length} repositor[ y | ies ] found.`);
@@ -380,9 +404,11 @@ export class TakeMeHomeBot {
                         || moment(gtfsItem.lastUpdate)
                             .isAfter(moment().days(Config.UPDATE_DAY_AFTER))) {
                         this.updateGTFSData(gtfsItem).then(() => {
-                            next();
                         });
+                    } else {
+                        this.logInfo(`No update needed for ${gtfsItem.name}.`);
                     }
+                    next();
                 }, err => {
                     if (err) {
                         this.logErr(err);
