@@ -9,7 +9,6 @@ import * as mongoose from 'mongoose';
 import * as path from 'path';
 import * as unzip from 'unzip';
 import * as csvParser from 'csv-parse';
-import * as emoji from 'node-emoji';
 import { Config } from './Config';
 import { ParsedPath, resolve, parse } from 'path';
 import { ConfigModel, IConfigModel } from './models/ConfigModel';
@@ -18,6 +17,7 @@ import { Model, disconnect } from 'mongoose';
 import { reject, select } from 'async';
 import { IGTFSDataModel, GTFSDataModel } from './models/GTFSDataModel';
 import { URLSearchParams } from 'url';
+import { ResponseMessage } from './models/ResponseMessage';
 
 export class TakeMeHomeBot {
     private telebot: TeleBot;
@@ -147,8 +147,11 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                     }
                     async.forEach<any, Error>(results,
                         async (stopItem, next) => {
-                            const waiting_time = await this.checkWaitingTime(stopItem.obj);
-                            this.telebot.sendMessage(this.getMsgId(msg), `${emoji.get('id') + stopItem.obj.stop_id}\n${emoji.get('busstop') + stopItem.obj.stop_name}\n${emoji.get('mag') + stopItem.obj.stop_desc ? stopItem.obj.stop_desc : ''}\n\n${waiting_time}`)
+                            const response: ResponseMessage = new ResponseMessage(stopItem.obj.stop_id,
+                                stopItem.obj.stop_name,
+                                stopItem.obj.stop_desc ? stopItem.obj.stop_desc : '');
+                            await this.checkWaitingTime(stopItem.obj, response);
+                            this.telebot.sendMessage(this.getMsgId(msg), response.message)
                                 .then(() => { next(); })
                                 .catch(err => { this.logErr(err); next(); });
                         },
@@ -162,8 +165,8 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
         }
     }
 
-    private checkWaitingTime(stopItem: IGTFSDataModel): Promise<string> {
-        return new Promise<string>((resolve, reject) => {
+    private checkWaitingTime(stopItem: IGTFSDataModel, responseMsg: ResponseMessage): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
             if (!stopItem) {
                 reject(new Error(`stopItem is invalid.`));
                 return;
@@ -192,14 +195,14 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                         let waiting_time: string = '';
                         if (Array.isArray(response.data.risposta.arrivi)) {
                             async.forEach<any, Error>(response.data.risposta.arrivi, (r_item, next) => {
-                                if (r_item.linea)
-                                    waiting_time += `${emoji.get('oncoming_bus') + r_item.linea}${r_item.capolinea ? ' (' + r_item.capolinea + ')' : ''}  `;
-                                if (r_item.annuncio)
-                                    waiting_time += r_item.annuncio + '\n';
+                                if (r_item.linea
+                                    && r_item.annuncio
+                                    && r_item.capolinea
+                                ) responseMsg.addWaitingData(r_item.linea, r_item.capolinea, r_item.annuncio);
                                 next();
                             },
                                 err => {
-                                    resolve(waiting_time);
+                                    resolve();
                                 });
                         }
                     }
@@ -558,11 +561,11 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                             this.logInfo(`Cleanup files for ${gtfsDoc.name}`);
                             const self: TakeMeHomeBot = this;
                             fs.unlink(fullPath, (err: NodeJS.ErrnoException) => {
-                                if(err) 
+                                if (err)
                                     self.logErr(err);
                             });
                             fs.unlink(stopsFile, (err: NodeJS.ErrnoException) => {
-                                if(err) 
+                                if (err)
                                     self.logErr(err);
                             });
                             resolve();
@@ -596,10 +599,10 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                             item.remove().then(() => { ++removed_count; next(); })
                                 .catch(err => { self.logErr(err); next(); });
                         },
-                    err => {
-                        this.logInfo(`${removed_count} item[s] removed.`);
-                        resolve();
-                    });
+                        err => {
+                            this.logInfo(`${removed_count} item[s] removed.`);
+                            resolve();
+                        });
                 });
         });
     }
