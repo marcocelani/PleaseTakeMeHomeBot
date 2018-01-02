@@ -62,6 +62,12 @@ export class GTFSDataModel implements IPTMHMModel{
             }
         }, { collection: Config.MONGODB_GTFS_DATA_COLL});
         this.gtfsDataSchema.index({location: '2dsphere'});
+        this.gtfsDataSchema.pre('remove', function(next){
+            next();
+        });
+        this.gtfsDataSchema.pre('save', function(next){
+            next();
+        });
         /* model */
         this.gtfsDataModel = moongose.model<IGTFSDataModel>('GTFSData', this.gtfsDataSchema);
     }

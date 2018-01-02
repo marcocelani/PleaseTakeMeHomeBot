@@ -192,14 +192,14 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                         let waiting_time: string = '';
                         if (Array.isArray(response.data.risposta.arrivi)) {
                             async.forEach<any, Error>(response.data.risposta.arrivi, (r_item, next) => {
-                                if(r_item.linea)
-                                    waiting_time +=  `${emoji.get('oncoming_bus') + r_item.linea}${r_item.capolinea ? ' (' + r_item.capolinea + ')' : ''}  `;
-                                if(r_item.annuncio)
+                                if (r_item.linea)
+                                    waiting_time += `${emoji.get('oncoming_bus') + r_item.linea}${r_item.capolinea ? ' (' + r_item.capolinea + ')' : ''}  `;
+                                if (r_item.annuncio)
                                     waiting_time += r_item.annuncio + '\n';
                                 next();
                             },
                                 err => {
-                                    resolve(waiting_time);           
+                                    resolve(waiting_time);
                                 });
                         }
                     }
@@ -453,28 +453,23 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
             async.forEach<any, Error>(dataArr,
                 (gtfsItem, next) => {
                     if (this.checkGTFSItem(gtfsItem)) {
-                        try {
-                            const gtfsDataDoc = new this.gtfsDataModel({
-                                stop_id: gtfsItem.stop_id,
-                                stop_name: gtfsItem.stop_name,
-                                location: {
-                                    type: 'Point',
-                                    coordinates: [gtfsItem.stop_lat, gtfsItem.stop_lon]
-                                },
-                                referenceId: gtfsDoc._id,
-                                stop_desc: gtfsItem.stop_desc ? gtfsItem.stop_desc : '',
-                                repo_data: gtfsDoc.repo_data
-                            });
-                            gtfsDataDoc.save()
-                                .then(() => { ++imported_count; })
-                                .catch(err => { this.logErr(err); });
-                        } catch (err) {
-                            this.logErr(err);
-                        }
+                        const gtfsDataDoc = new this.gtfsDataModel({
+                            stop_id: gtfsItem.stop_id,
+                            stop_name: gtfsItem.stop_name,
+                            location: {
+                                type: 'Point',
+                                coordinates: [gtfsItem.stop_lat, gtfsItem.stop_lon]
+                            },
+                            referenceId: gtfsDoc._id,
+                            stop_desc: gtfsItem.stop_desc ? gtfsItem.stop_desc : '',
+                            repo_data: gtfsDoc.repo_data
+                        });
+                        gtfsDataDoc.save()
+                            .then(() => { ++imported_count; next(); })
+                            .catch(err => { this.logErr(err); next(); });
                     } else {
                         this.logInfo(`Invalid gtfs item found. Skip.`);
                     }
-                    next(null);
                 },
                 (err) => {
                     this.logInfo(`Imported ${imported_count} doc[ s ].`);
@@ -543,6 +538,8 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                             return;
                         }
                         this.logInfo(`Hashes differ, update needed for ${gtfsDoc.name}`);
+                        await this.removeExistingData(gtfsDoc._id).catch((err) => this.logErr(err));
+
                         const result = await this.extractSTOPSCsv(fullPath).catch(() => this.logErr(`Cannot read CSV Data.`));
                         if (!result) {
                             this.logInfo(`No stops.txt file found.`);
@@ -558,6 +555,16 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                             }
                             await this.importData(gtfsDataArr, gtfsDoc).catch(() => this.logErr(`Cannot import data.`));
                             await this.updateHash(gtfsDoc, fileHash).catch(() => this.logErr(`Cannot update hash.`));
+                            this.logInfo(`Cleanup files for ${gtfsDoc.name}`);
+                            const self: TakeMeHomeBot = this;
+                            fs.unlink(fullPath, (err: NodeJS.ErrnoException) => {
+                                if(err) 
+                                    self.logErr(err);
+                            });
+                            fs.unlink(stopsFile, (err: NodeJS.ErrnoException) => {
+                                if(err) 
+                                    self.logErr(err);
+                            });
                             resolve();
                         }
                     } else {
@@ -566,6 +573,34 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                     }
                 })
                 .catch(err => { this.logErr(err); resolve(); });
+        });
+    }
+
+    private removeExistingData(referenceId: any): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.logInfo(`removing existing data.`);
+            let removed_count: number = 0;
+            if (!referenceId) {
+                reject(new Error(`reference id is invalid.`));
+                return;
+            }
+            const self: TakeMeHomeBot = this;
+            this.gtfsDataModel.find({ 'referenceId': referenceId },
+                (err, res) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    async.forEach<IGTFSDataModel, Error>(res,
+                        (item, next) => {
+                            item.remove().then(() => { ++removed_count; next(); })
+                                .catch(err => { self.logErr(err); next(); });
+                        },
+                    err => {
+                        this.logInfo(`${removed_count} item[s] removed.`);
+                        resolve();
+                    });
+                });
         });
     }
 
