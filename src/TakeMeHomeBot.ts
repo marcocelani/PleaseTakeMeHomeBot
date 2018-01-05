@@ -536,6 +536,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                         }
                         if (fileHash === gtfsDoc.hash) {
                             this.logInfo(`No update needed for ${gtfsDoc.name}`);
+                            await this.updateHash(gtfsDoc, fileHash).catch(() => this.logErr(`Cannot update hash.`));
                             resolve();
                             return;
                         }
