@@ -16,7 +16,6 @@ import { GTFSRepositoryModel, IGTFSRepositoryModel, IRepoRESTDataModel } from '.
 import { Model, disconnect } from 'mongoose';
 import { reject, select } from 'async';
 import { IGTFSDataModel, GTFSDataModel } from './models/GTFSDataModel';
-import { URLSearchParams } from 'url';
 import { ResponseMessage } from './models/ResponseMessage';
 
 export class TakeMeHomeBot {
@@ -391,7 +390,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                             var type = entry.type;
                             if (entry.type === 'File'
                                 && fileName === 'stops.txt') {
-                                entry.pipe(fs.createWriteStream(outputPath, { autoClose: true }));
+                                entry.pipe(fs.createWriteStream(outputPath));
                                 entry.autodrain();
                                 this.logInfo(`stops.txt extracted[${zipFilePath}].`);
                             } else {

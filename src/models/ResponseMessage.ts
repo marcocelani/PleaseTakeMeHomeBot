@@ -35,10 +35,14 @@ export class ResponseMessage {
             this.stop_name}\n${emoji.get('mag') +
             this.stop_desc}\n\n`;
 
+        if(JSON.stringify({}) === JSON.stringify(this.waiting_time)){
+            mex += this.noInformation();
+            return mex;
+        }
         for (let dic_key in this.waiting_time) {
             mex += emoji.get('oncoming_bus') + ' ' + dic_key + '\n';
             if (this.waiting_time[dic_key].length == 0) {
-                mex += emoji.get('skull') + ' ' + 'No information.' + '\n';
+                mex += this.noInformation();
             } else {
                 for (let arr_item of this.waiting_time[dic_key]) {
                     mex += emoji.get('watch') + ' ' + arr_item.annuncio + '\n';
@@ -47,5 +51,9 @@ export class ResponseMessage {
             mex += '\n';
         }
         return mex;
+    }
+
+    private noInformation(): string {
+        return emoji.get('skull') + ' ' + 'No information.' + '\n';
     }
 } 
