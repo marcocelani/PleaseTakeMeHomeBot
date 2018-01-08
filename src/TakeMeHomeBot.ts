@@ -9,6 +9,7 @@ import * as mongoose from 'mongoose';
 import * as path from 'path';
 import * as unzip from 'unzip';
 import * as csvParser from 'csv-parse';
+import * as emoji from 'node-emoji';
 import { Config } from './Config';
 import { ParsedPath, resolve, parse } from 'path';
 import { ConfigModel, IConfigModel } from './models/ConfigModel';
@@ -232,7 +233,8 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
         return this.telebot.inlineKeyboard(
             [
                 [
-                    this.telebot.inlineButton(`Check Again`, { callback: 'stop_id' + Config.SEP_TOKEN + stopItem.stop_id })
+                    this.telebot.inlineButton(`Go! ${emoji.get('runner')}`, { url: `maps.google.com?q=${stopItem.location.coordinates[0]},${stopItem.location.coordinates[1]}`}),
+                    this.telebot.inlineButton(`${emoji.get('recycle')} Check Again`, { callback: 'stop_id' + Config.SEP_TOKEN + stopItem.stop_id })
                 ]
             ]
         );
