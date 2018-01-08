@@ -17,6 +17,7 @@ import { Model, disconnect } from 'mongoose';
 import { reject, select } from 'async';
 import { IGTFSDataModel, GTFSDataModel } from './models/GTFSDataModel';
 import { ResponseMessage } from './models/ResponseMessage';
+import { IMessage } from './models/IMessage';
 
 export class TakeMeHomeBot {
     private telebot: TeleBot;
@@ -99,7 +100,7 @@ export class TakeMeHomeBot {
         console.log(`[${this.getTimeStamp()}] ${mex}`);
     }
 
-    private getMsgId(msg: any): number {
+    private getMsgId(msg: IMessage): number {
         if (!msg)
             throw new Error('Msg is invalid.');
         if (this.isFromGroup(msg))
@@ -108,7 +109,7 @@ export class TakeMeHomeBot {
             return msg.from.id;
     }
 
-    private async CmdStart(msg: any): Promise<void> {
+    private async CmdStart(msg: IMessage): Promise<void> {
         if (!msg) {
             this.logInfo(`msg is invalid.`);
             return;
@@ -123,7 +124,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
 `);
     }
 
-    private isValidMsgLocationEvent(msg): boolean {
+    private isValidMsgLocationEvent(msg: IMessage): boolean {
         if (!msg
             || !msg.location
             || !msg.location.latitude
@@ -132,7 +133,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
         return true;
     }
 
-    private ManageLocationEvent(msg): void {
+    private ManageLocationEvent(msg: IMessage): void {
         if (this.isValidMsgLocationEvent(msg)) {
             const geoJSON = {
                 type: 'Point',
@@ -266,13 +267,13 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
         });
     }
 
-    private getUserName(msg: any): string {
+    private getUserName(msg: IMessage): string {
         if (!msg && !msg.from)
             return '(not found)';
         return (msg.from.username) ? `@${msg.from.username}` : `@id:${msg.from.id}`;
     };
 
-    private isFromGroup(msg: any): boolean {
+    private isFromGroup(msg: IMessage): boolean {
         if (msg
             && msg.chat
             && msg.chat.type
@@ -283,7 +284,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
         return false;
     }
 
-    private sendMessage(msg: any, text: string): void {
+    private sendMessage(msg: IMessage, text: string): void {
         let id = -1;
         if (!msg && !msg.chat && !msg.chat.type) {
             this.logInfo(`msg is invalid.`);
