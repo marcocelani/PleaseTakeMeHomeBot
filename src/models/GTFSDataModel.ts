@@ -17,28 +17,28 @@ export interface IGTFSDataModel extends Document {
     stop_code?: string;
     stop_name: string;
     stop_desc?: string;
-    location : ILocation;
+    location: ILocation;
     zone?: number,
     stop_url?: string,
     location_type?: string,
     parent_station?: number;
     repo_data: IRepoRESTDataModel;
 }
-export class GTFSDataModel implements IPTMHMModel{
-    private gtfsDataSchema : Schema;
+export class GTFSDataModel implements IPTMHMModel {
+    private gtfsDataSchema: Schema;
     private repoRestParamSchema: Schema;
     private repoRestSchema: Schema;
-    private gtfsDataModel : Model<IGTFSDataModel>;
+    private gtfsDataModel: Model<IGTFSDataModel>;
     constructor() {
         /* schema */
         this.repoRestParamSchema = new RepoRestParamSchema().schema;
         this.repoRestSchema = new RepoRestSchema().schema;
         this.gtfsDataSchema = new Schema({
-            referenceId : {
+            referenceId: {
                 type: String,
                 required: true
             },
-            stop_id : {
+            stop_id: {
                 type: String,
                 required: true
             },
@@ -48,7 +48,7 @@ export class GTFSDataModel implements IPTMHMModel{
                 required: true
             },
             stop_desc: String,
-            location : {
+            location: {
                 type: { type: String },
                 coordinates: [Number],
             },
@@ -60,12 +60,13 @@ export class GTFSDataModel implements IPTMHMModel{
                 type: this.repoRestSchema,
                 required: true
             }
-        }, { collection: Config.MONGODB_GTFS_DATA_COLL});
-        this.gtfsDataSchema.index({location: '2dsphere'});
-        this.gtfsDataSchema.pre('remove', function(next){
+        }, { collection: Config.MONGODB_GTFS_DATA_COLL });
+        this.gtfsDataSchema.index({ location: '2dsphere' });
+        this.gtfsDataSchema.index({ stop_id: 1 })
+        this.gtfsDataSchema.pre('remove', function (next) {
             next();
         });
-        this.gtfsDataSchema.pre('save', function(next){
+        this.gtfsDataSchema.pre('save', function (next) {
             next();
         });
         /* model */

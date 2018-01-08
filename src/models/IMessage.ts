@@ -23,4 +23,5 @@ export interface IMessage {
     message?: any;
     query?: string;
     location?: ILocation;
+    data: string;
 }

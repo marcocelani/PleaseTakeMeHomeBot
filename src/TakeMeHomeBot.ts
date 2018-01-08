@@ -114,9 +114,8 @@ export class TakeMeHomeBot {
             this.logInfo(`msg is invalid.`);
             return;
         }
-        const id = this.getMsgId(msg);
         const self: TakeMeHomeBot = this;
-        this.telebot.sendMessage(id, `
+        this.sendMessage(msg, `
             Hello ${this.getUserName(msg)}.
 If you send me your location I show you the buses arrivals and times stops nearby you.
 This is a list of active repositories:
@@ -147,13 +146,9 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                     }
                     async.forEach<any, Error>(results,
                         async (stopItem, next) => {
-                            const response: ResponseMessage = new ResponseMessage(stopItem.obj.stop_id,
-                                stopItem.obj.stop_name,
-                                stopItem.obj.stop_desc ? stopItem.obj.stop_desc : '');
-                            await this.checkWaitingTime(stopItem.obj, response);
-                            this.telebot.sendMessage(this.getMsgId(msg), response.message)
-                                .then(() => { next(); })
-                                .catch(err => { this.logErr(err); next(); });
+                            await this.makeAResponse(msg, stopItem.obj)
+                                .then(() => next(null))
+                                .catch((err) => { this.logErr(err); next(null); });
                         },
                         err => {
                             this.logInfo(`query complete for ${this.getUserName(msg)}.`);
@@ -163,6 +158,84 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
         } else {
             this.logErr(`Invalid location message event.`);
         }
+    }
+
+    private makeAResponse(msg: IMessage, stopItem: any): Promise<void> {
+        return new Promise<void>(async (resolve, reject) => {
+            const response: ResponseMessage = new ResponseMessage(stopItem.stop_id,
+                stopItem.stop_name,
+                stopItem.stop_desc ? stopItem.stop_desc : '');
+            try {
+                await this.checkWaitingTime(stopItem, response);
+            }
+            catch (err) {
+                this.logErr(err);
+                return;
+            }
+            this.sendMessage(msg, response.message, { replyMarkup: this.responseButtons(stopItem) });
+        });
+    }
+
+    private checkAgain(msg: IMessage, stop_id: string): void {
+        if (!stop_id) {
+            this.wrongCallback(msg);
+            return;
+        }
+        const self: TakeMeHomeBot = this;
+        this.gtfsDataModel.findOne({ stop_id: stop_id },
+            (err, res) => {
+                if (err) {
+                    self.logErr(err);
+                    self.sendMessage(msg, `An error occurred.`);
+                    return;
+                }
+                if (!res) {
+                    self.sendMessage(msg, `No stop found.`);
+                    return;
+                }
+                this.makeAResponse(msg, res).catch( err => {
+                    self.logErr(err);
+                    self.sendMessage(msg, `An error occurred.`);
+                });
+            });
+    }
+
+    private wrongCallback(msg: IMessage): void {
+        this.sendMessage(msg, `Wrong callback query`);
+    }
+
+    private ManageCallbackQuery(msg: IMessage) {
+        if (!msg.data) {
+            this.wrongCallback(msg);
+            return;
+        }
+        if (msg.data.includes(Config.SEP_TOKEN)) {
+            const splitted: Array<string> = msg.data.split(Config.SEP_TOKEN);
+            if (splitted.length < 1) {
+                this.wrongCallback(msg);
+                return;
+            }
+            const base = splitted[0];
+            const data = splitted[1];
+            switch (splitted[0]) {
+                case 'stop_id':
+                    this.checkAgain(msg, data);
+                    break;
+                default:
+                    break;
+            }
+        } else
+            this.wrongCallback(msg);
+    }
+
+    private responseButtons(stopItem: any): any {
+        return this.telebot.inlineKeyboard(
+            [
+                [
+                    this.telebot.inlineButton(`Check Again`, { callback: 'stop_id' + Config.SEP_TOKEN + stopItem.stop_id })
+                ]
+            ]
+        );
     }
 
     private checkWaitingTime(stopItem: IGTFSDataModel, responseMsg: ResponseMessage): Promise<void> {
@@ -199,7 +272,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                                     && r_item.annuncio
                                     && r_item.capolinea
                                 ) responseMsg.addWaitingData(r_item.linea, r_item.capolinea, r_item.annuncio);
-                                next();
+                                next(null);
                             },
                                 err => {
                                     resolve();
@@ -250,7 +323,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                         repoItems,
                         (item, next) => {
                             repoNameArr.push(item.name);
-                            next();
+                            next(null);
                         },
                         err => {
                             if (err) {
@@ -284,7 +357,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
         return false;
     }
 
-    private sendMessage(msg: IMessage, text: string): void {
+    private sendMessage(msg: IMessage, text: string, opt?: any): void {
         let id = -1;
         if (!msg && !msg.chat && !msg.chat.type) {
             this.logInfo(`msg is invalid.`);
@@ -298,8 +371,12 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
             id = msg.from.id;
         }
 
-        this.telebot.sendMessage(id, text)
-            .catch(err => this.logErr(err));
+        if (opt)
+            this.telebot.sendMessage(id, text, opt)
+                .catch(err => this.logErr(err));
+        else
+            this.telebot.sendMessage(id, text)
+                .catch(err => this.logErr(err));
     };
 
     private initBotCommand(): void {
@@ -307,6 +384,7 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
             throw new Error('No Telebot instance.');
         this.telebot.on('/start', (msg) => this.CmdStart(msg));
         this.telebot.on('location', (msg) => this.ManageLocationEvent(msg));
+        this.telebot.on('callbackQuery', msg => this.ManageCallbackQuery(msg));
     }
 
     private createPathIfNotExist(fileName: string): Promise<void> {
@@ -468,8 +546,8 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                             repo_data: gtfsDoc.repo_data
                         });
                         gtfsDataDoc.save()
-                            .then(() => { ++imported_count; next(); })
-                            .catch(err => { this.logErr(err); next(); });
+                            .then(() => { ++imported_count; next(null); })
+                            .catch(err => { this.logErr(err); next(null); });
                     } else {
                         this.logInfo(`Invalid gtfs item found. Skip.`);
                     }
@@ -597,8 +675,8 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                     }
                     async.forEach<IGTFSDataModel, Error>(res,
                         (item, next) => {
-                            item.remove().then(() => { ++removed_count; next(); })
-                                .catch(err => { self.logErr(err); next(); });
+                            item.remove().then(() => { ++removed_count; next(null); })
+                                .catch(err => { self.logErr(err); next(null); });
                         },
                         err => {
                             this.logInfo(`${removed_count} item[s] removed.`);
@@ -617,11 +695,11 @@ ${await this.getRepositoriesActiveList().catch(err => self.logErr(err))}
                         || moment(gtfsItem.lastUpdate).startOf('day')
                             .isBefore(moment().days(Config.UPDATE_DAY_AFTER).startOf('day'))) {
                         this.updateGTFSData(gtfsItem).then(() => {
-                            next();
+                            next(null);
                         });
                     } else {
                         this.logInfo(`No update needed for ${gtfsItem.name}.`);
-                        next();
+                        next(null);
                     }
                 }, err => {
                     if (err) {
